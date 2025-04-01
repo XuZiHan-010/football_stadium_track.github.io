@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Football Stadium Journey Map</title>
+  <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.10.0/mapbox-gl.css" rel="stylesheet">
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.10.0/mapbox-gl.js"></script>
+  <style>
+    body { margin: 0; padding: 0; font-family: sans-serif; }
+    #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+
+    #toggle-btn, #bgm-btn {
+      position: absolute;
+      top: 10px;
+      z-index: 1;
+      padding: 8px 12px;
+      background: white;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    #toggle-btn { left: 10px; }
+    #bgm-btn { left: 90px; }
+
+    .screenshot-popup {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 10;
+      display: none;
+      border: 2px solid #fff;
+      box-shadow: 0 0 20px rgba(0, 0, 0, 0.6);
+      background: #fff;
+      opacity: 0;
+      transition: opacity 1s ease-in-out;
+    }
+
+    .screenshot-popup.show { display: block; opacity: 1; }
+    .screenshot-popup.hide { opacity: 0; }
+
+    .screenshot-popup img {
+      display: block;
+      max-width: 90vw;
+      max-height: 80vh;
+    }
+
+    a { color: blue; }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<button id="toggle-btn">Pause</button>
+<button id="bgm-btn">Play BGM</button>
+<audio id="bg-music" src="./audio/canon.mp3" autoplay loop></audio>
+<div id="screenshot" class="screenshot-popup"><img src="" alt="screenshot" /></div>
+
+<script>
+const bgm = document.getElementById("bg-music");
+const bgmBtn = document.getElementById("bgm-btn");
+bgmBtn.addEventListener("click", () => {
+  if (bgm.paused) {
+    bgm.play();
+    bgmBtn.textContent = "BGM Off";
+  } else {
+    bgm.pause();
+    bgmBtn.textContent = "BGM On";
+  }
+});
+
+mapboxgl.accessToken = 'pk.eyJ1IjoieHV6aWhhbi0wMTAiLCJhIjoiY2xyN3I2aHNjMGZucjJxbng1dmJzMWpydSJ9.UAwzZuZV94T42egSMaUf-Q';
+const map = new mapboxgl.Map({
+  container: 'map',
+  style: 'mapbox://styles/mapbox/light-v11',
+  center: [-1, 52],
+  zoom: 4,
+  projection: 'equalEarth'
+});
+
+const journey = [
+  { name: 'Etihad Stadium', coords: [-2.2004, 53.4831] },
+  { name: 'Ibrox Stadium', coords: [-4.3090, 55.8530] },
+  { name: 'Emirates Stadium', coords: [-0.1086, 51.5549] },
+  { name: 'Camp Nou', coords: [2.1204, 41.3809] },
+  { name: 'Wanda Metropolitano', coords: [-3.6012, 40.4362] },
+  { name: 'Santiago Bernabéu', coords: [-3.6884, 40.4531] },
+  { name: 'Signal Iduna Park', coords: [7.4519, 51.4928] },
+  { name: 'Allianz Arena', coords: [11.6247, 48.2188] },
+  { name: 'Wembley Stadium', coords: [-0.2795, 51.5560] },
+  { name: 'Anfield', coords: [-2.9608, 53.4308] }
+];
+
+const routeGeoJSON = {
+  type: 'FeatureCollection',
+  features: [{ type: 'Feature', geometry: { type: 'LineString', coordinates: [] } }]
+};
+
+let isPaused = false;
+let currentIndex = 0;
+const markerIds = new Set();
+const screenshotBox = document.getElementById('screenshot');
+const screenshotImg = screenshotBox.querySelector('img');
+
+function showScreenshot(name) {
+  const baseName = name.toLowerCase().replace(/[^a-z0-9]/g, '-');
+  const tryJpg = `./screenshots/${baseName}.jpg`;
+  const tryPng = `./screenshots/${baseName}.png`;
+  screenshotBox.classList.remove('show', 'hide');
+  screenshotBox.style.display = 'block';
+  screenshotImg.src = tryJpg;
+  screenshotImg.onerror = () => {
+    screenshotImg.onerror = null;
+    screenshotImg.src = tryPng;
+  };
+  setTimeout(() => screenshotBox.classList.add('show'), 50);
+  setTimeout(() => {
+    screenshotBox.classList.remove('show');
+    screenshotBox.classList.add('hide');
+  }, 4000);
+  setTimeout(() => {
+    screenshotBox.style.display = 'none';
+  }, 5000);
+}
+
+map.on('load', () => {
+  map.addSource('route', { type: 'geojson', data: routeGeoJSON });
+  map.addLayer({
+    id: 'route-line',
+    type: 'line',
+    source: 'route',
+    paint: {
+      'line-color': '#ff69b4',
+      'line-width': 5,
+      'line-opacity': 0.8,
+      'line-blur': 2
+    }
+  });
+
+  map.addLayer({
+    id: 'highlight-circle',
+    type: 'circle',
+    source: {
+      type: 'geojson',
+      data: {
+        type: 'FeatureCollection',
+        features: journey.map(p => ({
+          type: 'Feature',
+          properties: { name: p.name },
+          geometry: { type: 'Point', coordinates: p.coords }
+        }))
+      }
+    },
+    paint: {
+      'circle-radius': 20,
+      'circle-color': '#FFA500',
+      'circle-opacity': 0
+    }
+  });
+
+  animateRoute();
+});
+
+function animateRoute() {
+  if (currentIndex >= journey.length) return;
+  const point = journey[currentIndex];
+  const previousCoord = currentIndex === 0 ? point.coords : journey[currentIndex - 1].coords;
+  const steps = 60;
+  let i = 0;
+
+  function drawStep() {
+    if (i <= steps) {
+      const lng = previousCoord[0] + (point.coords[0] - previousCoord[0]) * (i / steps);
+      const lat = previousCoord[1] + (point.coords[1] - previousCoord[1]) * (i / steps);
+      routeGeoJSON.features[0].geometry.coordinates.push([lng, lat]);
+      map.getSource('route').setData(routeGeoJSON);
+      i++;
+      setTimeout(drawStep, 40);
+    } else {
+      map.flyTo({ center: point.coords, zoom: 5, speed: 0.3 });
+
+      map.setPaintProperty('highlight-circle', 'circle-opacity', [
+        'case', ['==', ['get', 'name'], point.name], 0.5, 0
+      ]);
+
+      if (!markerIds.has(point.name)) {
+        const popup = new mapboxgl.Popup({ offset: 25 }).setText(point.name);
+        const marker = new mapboxgl.Marker({ color: '#000' })
+          .setLngLat(point.coords)
+          .setPopup(popup)
+          .addTo(map);
+        marker.togglePopup();
+        setTimeout(() => marker.togglePopup(), 2000);
+        markerIds.add(point.name);
+        marker.getElement().addEventListener('click', () => showScreenshot(point.name));
+      }
+      showScreenshot(point.name);
+      if (!isPaused) {
+        currentIndex++;
+        setTimeout(animateRoute, 5000);
+      }
+    }
+  }
+  drawStep();
+}
+
+document.getElementById('toggle-btn').addEventListener('click', () => {
+  if (currentIndex >= journey.length) {
+    currentIndex = 0;
+    routeGeoJSON.features[0].geometry.coordinates = [];
+    markerIds.clear();
+    document.querySelectorAll('.mapboxgl-marker').forEach(el => el.remove());
+    animateRoute();
+    document.getElementById('toggle-btn').textContent = 'Pause';
+    isPaused = false;
+  } else {
+    isPaused = !isPaused;
+    document.getElementById('toggle-btn').textContent = isPaused ? 'Play' : 'Pause';
+    if (!isPaused) animateRoute();
+  }
+});
+</script>
+</body>
+</html>
